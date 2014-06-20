@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+
+from __future__ import absolute_import, print_function, unicode_literals
+
+from gi.repository import GObject
+
+import os
+import sys
+import random
+import argparse
+import socket
+import socketserver
+
+import dbus
+import dbus.service
+import dbus.mainloop.glib
+
+AVAHI_SERVICE_NAME = "org.freedesktop.Avahi"
+SERVER_INTERFACE = AVAHI_SERVICE_NAME + ".Server"
+SERVER_PATH = "/"
+ENTRY_GROUP_INTERFACE = AVAHI_SERVICE_NAME + ".EntryGroup"
+SERVICE_BROWSER_INTERFACE = AVAHI_SERVICE_NAME + ".ServiceBrowser"
+
+PROTO_UNSPEC = -1
+PROTO_INET = 0
+PROTO_INET6 = 1
+IF_UNSPEC = -1
+
+SERVICE_NAME = "zeropipe"
+SERVICE_TYPE = "_airpipe._tcp"
+SERVICE_TXT = ""
+
+def sendall(outfile, infile):
+    SIZE = 64 * 1024
+    outfd = outfile.fileno()
+    infd = infile.fileno()
+    while True:
+        sent = os.sendfile(outfd, infd, None, SIZE)
+        if sent == 0:
+            break
+
+# This is because sendfile(2) infile cannot be a socket,
+# i.e. it must support mmap.
+def recvall(outfile, infile):
+    SIZE = 64 * 1024
+
+    while True:
+        buf = infile.recv(SIZE)
+        if buf is None or len(buf) == 0:
+            return
+
+        total = 0
+        while True:
+            w = outfile.write(buf[total:])
+            if w == 0:
+                break
+            total += w
+
+class ZeroServer(socketserver.BaseRequestHandler):
+    def handle(self):
+        sendall(self.request, sys.stdin)
+
+def service_resolved(*args):
+    service_txt = ''
+    for c in args[9]:
+        service_txt += chr(c[0])
+    service_txt = ''.join(reversed(service_txt))
+
+    if service_txt == nonce:
+        addr = args[7]
+        port = int(args[8])
+        s = socket.create_connection((addr, port))
+        recvall(sys.stdout.buffer, s)
+
+        mainloop.quit()
+
+def error_handler(error):
+    sys.stderr.write("Error: %s\n" % error)
+
+def to_array_of_array(str):
+    a = dbus.Array()
+    for c in str:
+        sub = dbus.ByteArray(c.encode())
+        a.append(sub)
+    return a
+
+class Zeropipe:
+    def __init__(self, bus):
+        self.bus = bus
+        self.server = dbus.Interface(bus.get_object(AVAHI_SERVICE_NAME,
+                                                    SERVER_PATH),
+                                     SERVER_INTERFACE)
+
+    def register_local_service(self, name, service_type, port, txt):
+        obj = self.bus.get_object(AVAHI_SERVICE_NAME,
+                                  self.server.EntryGroupNew())
+        self.group = dbus.Interface(obj, ENTRY_GROUP_INTERFACE)
+        self.group.AddService(IF_UNSPEC, PROTO_INET, 0,
+                              name, service_type, "", "",
+                              port, to_array_of_array(txt))
+        self.group.Commit()
+
+    def find_service(self, service_type):
+        browser_path = self.server.ServiceBrowserNew(IF_UNSPEC,
+                        PROTO_UNSPEC, service_type, "", 0)
+        sbrowser = dbus.Interface(self.bus.get_object(AVAHI_SERVICE_NAME,
+                                                      browser_path),
+                                  SERVICE_BROWSER_INTERFACE)
+        sbrowser.connect_to_signal("ItemNew", self.new_service)
+
+    def new_service(self, interface, protocol, name, stype, domain, flags):
+        self.server.ResolveService(interface, protocol, name, stype,
+                                   domain, PROTO_UNSPEC, 0,
+                                   reply_handler=service_resolved,
+                                   error_handler=error_handler,
+                                   byte_arrays=True)
+
+if __name__ == '__main__':
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    random.seed()
+
+    mainloop = GObject.MainLoop()
+    bus = dbus.SystemBus()
+
+    zeropipe = Zeropipe(bus)
+
+    if not os.isatty(sys.stdin.fileno()):
+        service_port = random.randint(1024, 65535)
+        nonce = hex(random.getrandbits(128))
+
+        zeropipe.register_local_service(SERVICE_NAME, SERVICE_TYPE, service_port, nonce)
+
+        sys.stderr.write("{}\n".format(nonce))
+
+        server = socketserver.TCPServer(("0.0.0.0", service_port), ZeroServer)
+        server.handle_request()
+
+    elif not os.isatty(sys.stdout.fileno()):
+        nonce = sys.argv[1]
+        zeropipe.find_service(SERVICE_TYPE)
+        try:
+            mainloop.run()
+        except KeyboardInterrupt:
+            pass
