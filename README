@@ -1,0 +1,22 @@
+Zeropipe
+========
+
+A simple way to share files over a local network.
+
+Usage
+=====
+
+To send a file, just redirect the file to zeropipe's stdin, it will print a string that you will need to inform to the receiving side:
+
+$ zeropipe < /path/to/file
+<randomstring>
+
+To receive the file, just call zeropipe passing $randomstring and redirecting zeropipe's stdout to a chosen file:
+
+$ zeropipe $randomstring > /path/to/file
+
+Dependencies
+============
+  - Python 3.4
+  - pygobject
+  - dbus-python
