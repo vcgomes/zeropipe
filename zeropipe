@@ -30,20 +30,22 @@ SERVICE_NAME = "zeropipe"
 SERVICE_TYPE = "_airpipe._tcp"
 SERVICE_TXT = ""
 
+SIZE = 64 * 1024
+
 def sendall(outfile, infile):
-    SIZE = 64 * 1024
-    outfd = outfile.fileno()
-    infd = infile.fileno()
     while True:
-        sent = os.sendfile(outfd, infd, None, SIZE)
-        if sent == 0:
-            break
+        buf = infile.read(SIZE)
+        if buf is None or len(buf) == 0:
+            return
 
-# This is because sendfile(2) infile cannot be a socket,
-# i.e. it must support mmap.
+        total = 0
+        while True:
+            w = outfile.send(buf[total:])
+            if w == 0:
+                break
+            total += w
+
 def recvall(outfile, infile):
-    SIZE = 64 * 1024
-
     while True:
         buf = infile.recv(SIZE)
         if buf is None or len(buf) == 0:
@@ -58,7 +60,7 @@ def recvall(outfile, infile):
 
 class ZeroServer(socketserver.BaseRequestHandler):
     def handle(self):
-        sendall(self.request, sys.stdin)
+        sendall(self.request, sys.stdin.buffer)
 
 def service_resolved(*args):
     service_txt = ''
