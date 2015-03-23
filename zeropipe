@@ -2,7 +2,7 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-from gi.repository import GObject
+from gi.repository import GLib
 
 import os
 import sys
@@ -121,7 +121,7 @@ if __name__ == '__main__':
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     random.seed()
 
-    mainloop = GObject.MainLoop()
+    mainloop = GLib.MainLoop()
     bus = dbus.SystemBus()
 
     zeropipe = Zeropipe(bus)
